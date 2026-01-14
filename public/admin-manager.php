@@ -144,6 +144,60 @@ if (isAuthenticated() && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $messageType = 'success';
                 break;
                 
+            case 'edit_user':
+                $userId = (int)($_POST['user_id'] ?? 0);
+                $newName = trim($_POST['new_name'] ?? '');
+                $newEmail = trim($_POST['new_email'] ?? '');
+                $newPassword = $_POST['new_password'] ?? '';
+                
+                if ($userId <= 0) {
+                    throw new Exception('Invalid user ID!');
+                }
+                
+                $user = DB::table('users')->where('id', $userId)->first();
+                if (!$user) {
+                    throw new Exception('User not found!');
+                }
+                
+                $updates = [];
+                $changes = [];
+                
+                if (!empty($newName) && $newName !== $user->name) {
+                    $updates['name'] = $newName;
+                    $changes[] = "name changed to '$newName'";
+                }
+                
+                if (!empty($newEmail) && $newEmail !== $user->email) {
+                    if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                        throw new Exception('Invalid email format!');
+                    }
+                    $exists = DB::table('users')->where('email', $newEmail)->where('id', '!=', $userId)->exists();
+                    if ($exists) {
+                        throw new Exception('This email is already in use by another user!');
+                    }
+                    $updates['email'] = $newEmail;
+                    $changes[] = "email changed to '$newEmail'";
+                }
+                
+                if (!empty($newPassword)) {
+                    if (strlen($newPassword) < 8) {
+                        throw new Exception('Password must be at least 8 characters!');
+                    }
+                    $updates['password'] = Hash::make($newPassword);
+                    $changes[] = "password updated";
+                }
+                
+                if (empty($updates)) {
+                    throw new Exception('No changes provided!');
+                }
+                
+                $updates['updated_at'] = now();
+                DB::table('users')->where('id', $userId)->update($updates);
+                
+                $message = "User updated: " . implode(', ', $changes);
+                $messageType = 'success';
+                break;
+                
             case 'delete_user':
                 $userId = (int)($_POST['user_id'] ?? 0);
                 
@@ -156,27 +210,43 @@ if (isAuthenticated() && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception('User not found!');
                 }
                 
+                // First get user's account IDs for deleting transactions
+                $accountIds = [];
+                if (Schema::hasTable('accounts')) {
+                    $accountIds = DB::table('accounts')->where('user_id', $userId)->pluck('id')->toArray();
+                }
+                
+                // Delete transactions by account_id (not user_id)
+                if (!empty($accountIds) && Schema::hasTable('transactions')) {
+                    DB::table('transactions')->whereIn('account_id', $accountIds)->delete();
+                }
+                
                 // Delete related records first (to avoid foreign key issues)
-                $tables = [
+                // Only include tables that actually have user_id column
+                $tablesWithUserId = [
                     'model_has_roles' => ['model_id', 'model_type', 'App\\Models\\User'],
                     'model_has_permissions' => ['model_id', 'model_type', 'App\\Models\\User'],
                     'accounts' => ['user_id', null, null],
-                    'transactions' => ['user_id', null, null],
-                    'notifications' => ['user_id', null, null],
+                    'notifications' => ['notifiable_id', 'notifiable_type', 'App\\Models\\User'],
                     'support_tickets' => ['user_id', null, null],
                     'kyc_documents' => ['user_id', null, null],
                     'loans' => ['user_id', null, null],
                     'transfers' => ['user_id', null, null],
                     'referrals' => ['user_id', null, null],
+                    'funding_applications' => ['user_id', null, null],
+                    'linked_withdrawal_accounts' => ['user_id', null, null],
                 ];
                 
-                foreach ($tables as $table => $config) {
+                foreach ($tablesWithUserId as $table => $config) {
                     if (Schema::hasTable($table)) {
-                        $query = DB::table($table)->where($config[0], $userId);
-                        if ($config[1] !== null) {
-                            $query->where($config[1], $config[2]);
+                        // Check if the column exists before trying to delete
+                        if (Schema::hasColumn($table, $config[0])) {
+                            $query = DB::table($table)->where($config[0], $userId);
+                            if ($config[1] !== null) {
+                                $query->where($config[1], $config[2]);
+                            }
+                            $query->delete();
                         }
-                        $query->delete();
                     }
                 }
                 
@@ -367,6 +437,23 @@ if (isAuthenticated()) {
             table { display: block; overflow-x: auto; }
             .actions { flex-direction: column; }
         }
+        
+        /* Modal styles */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #1e293b; border-radius: 12px; padding: 25px; max-width: 500px; width: 90%;
+            border: 1px solid #374151; max-height: 90vh; overflow-y: auto;
+        }
+        .modal h3 { color: #fff; margin-bottom: 20px; }
+        .modal-close {
+            float: right; background: none; border: none; color: #94a3b8; font-size: 1.5rem;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-close:hover { color: #fff; }
     </style>
 </head>
 <body>
@@ -479,6 +566,10 @@ if (isAuthenticated()) {
                                     <td><?php echo date('M j, Y', strtotime($user->created_at)); ?></td>
                                     <td>
                                         <div class="actions">
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $user->id; ?>, '<?php echo htmlspecialchars(addslashes($user->name)); ?>', '<?php echo htmlspecialchars(addslashes($user->email)); ?>')">
+                                                Edit
+                                            </button>
+                                            
                                             <?php if (empty($user->roles) || (!in_array('admin', $user->roles) && !in_array('super_admin', $user->roles))): ?>
                                                 <form method="POST" style="display: inline;">
                                                     <input type="hidden" name="action" value="make_admin">
@@ -512,6 +603,64 @@ if (isAuthenticated()) {
                     </table>
                 </div>
             </div>
+            
+            <!-- EDIT USER MODAL -->
+            <div class="modal-overlay" id="editModal">
+                <div class="modal">
+                    <button class="modal-close" onclick="closeEditModal()">&times;</button>
+                    <h3>✏️ Edit User</h3>
+                    <form method="POST">
+                        <input type="hidden" name="action" value="edit_user">
+                        <input type="hidden" name="user_id" id="edit_user_id">
+                        
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" name="new_name" id="edit_name" placeholder="Leave blank to keep current">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" name="new_email" id="edit_email" placeholder="Leave blank to keep current">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>New Password (min 8 characters)</label>
+                            <input type="password" name="new_password" id="edit_password" placeholder="Leave blank to keep current" minlength="8">
+                        </div>
+                        
+                        <div style="display: flex; gap: 10px; margin-top: 20px;">
+                            <button type="submit" class="btn btn-success">Save Changes</button>
+                            <button type="button" class="btn btn-danger" onclick="closeEditModal()">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <script>
+                function openEditModal(userId, name, email) {
+                    document.getElementById('edit_user_id').value = userId;
+                    document.getElementById('edit_name').value = name;
+                    document.getElementById('edit_name').placeholder = name;
+                    document.getElementById('edit_email').value = email;
+                    document.getElementById('edit_email').placeholder = email;
+                    document.getElementById('edit_password').value = '';
+                    document.getElementById('editModal').classList.add('active');
+                }
+                
+                function closeEditModal() {
+                    document.getElementById('editModal').classList.remove('active');
+                }
+                
+                // Close modal on escape key
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') closeEditModal();
+                });
+                
+                // Close modal when clicking outside
+                document.getElementById('editModal').addEventListener('click', function(e) {
+                    if (e.target === this) closeEditModal();
+                });
+            </script>
             
             <?php if (count($roles) > 0): ?>
             <div class="card">
