@@ -1,0 +1,19 @@
+includes:
+    - vendor/nunomaduro/larastan/extension.neon
+
+parameters:
+    paths:
+        - app/
+
+    # Level 5 is a good balance - catches real issues without too many false positives
+    # Levels: 0 (loose) to 9 (strictest)
+    level: 5
+
+    ignoreErrors:
+        - '#Unsafe usage of new static#'
+        - '#Call to an undefined method Illuminate\\Database\\Eloquent\\Builder#'
+
+    excludePaths:
+        - vendor/
+        - bootstrap/cache/
+        - storage/
