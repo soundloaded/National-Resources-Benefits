@@ -13,13 +13,20 @@ return new class extends Migration
     {
         Schema::table('loans', function (Blueprint $table) {
             // Add new columns for monthly loan tracking
-            $table->integer('duration_months')->default(1)->after('total_payable');
-            $table->decimal('monthly_payment', 15, 2)->nullable()->after('duration_months');
-            $table->text('purpose')->nullable()->after('monthly_payment');
-            $table->uuid('account_id')->nullable()->after('purpose');
-            
-            // Add foreign key for account
-            $table->foreign('account_id')->references('id')->on('accounts')->nullOnDelete();
+            if (!Schema::hasColumn('loans', 'duration_months')) {
+                $table->integer('duration_months')->default(1);
+            }
+            if (!Schema::hasColumn('loans', 'monthly_payment')) {
+                $table->decimal('monthly_payment', 15, 2)->nullable();
+            }
+            if (!Schema::hasColumn('loans', 'purpose')) {
+                $table->text('purpose')->nullable();
+            }
+            if (!Schema::hasColumn('loans', 'account_id')) {
+                $table->uuid('account_id')->nullable();
+                // Add foreign key for account
+                $table->foreign('account_id')->references('id')->on('accounts')->nullOnDelete();
+            }
         });
     }
 

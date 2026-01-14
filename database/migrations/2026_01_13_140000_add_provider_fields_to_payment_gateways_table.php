@@ -13,24 +13,35 @@ return new class extends Migration
     {
         Schema::table('payment_gateways', function (Blueprint $table) {
             // Add provider field for auto gateways (stripe, paystack, flutterwave)
-            $table->string('provider')->nullable()->after('code');
+            if (!Schema::hasColumn('payment_gateways', 'provider')) {
+                $table->string('provider')->nullable();
+            }
             
             // Mode for auto gateways (live/test)
-            $table->enum('mode', ['live', 'test'])->default('test')->after('provider');
+            if (!Schema::hasColumn('payment_gateways', 'mode')) {
+                $table->string('mode')->default('test');
+            }
             
-            // Expand category to support more use cases
-            // Change category to support: deposit, withdrawal, payment (for generic payments like loan repayment)
-            // We'll handle this by adding a new column since SQLite doesn't support MODIFY
-            $table->string('supported_currencies')->nullable()->after('is_active');
-            $table->integer('sort_order')->default(0)->after('supported_currencies');
-            $table->text('description')->nullable()->after('instructions');
+            if (!Schema::hasColumn('payment_gateways', 'supported_currencies')) {
+                $table->string('supported_currencies')->nullable();
+            }
+            if (!Schema::hasColumn('payment_gateways', 'sort_order')) {
+                $table->integer('sort_order')->default(0);
+            }
+            if (!Schema::hasColumn('payment_gateways', 'description')) {
+                $table->text('description')->nullable();
+            }
         });
         
-        // Add index for faster queries
-        Schema::table('payment_gateways', function (Blueprint $table) {
-            $table->index(['type', 'is_active']);
-            $table->index(['category', 'is_active']);
-        });
+        // Add indexes for faster queries (check if they don't already exist)
+        try {
+            Schema::table('payment_gateways', function (Blueprint $table) {
+                $table->index(['type', 'is_active'], 'payment_gateways_type_is_active_index');
+                $table->index(['category', 'is_active'], 'payment_gateways_category_is_active_index');
+            });
+        } catch (\Exception $e) {
+            // Indexes might already exist
+        }
     }
 
     /**
@@ -39,9 +50,17 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('payment_gateways', function (Blueprint $table) {
-            $table->dropIndex(['type', 'is_active']);
-            $table->dropIndex(['category', 'is_active']);
-            $table->dropColumn(['provider', 'mode', 'supported_currencies', 'sort_order', 'description']);
+            try {
+                $table->dropIndex('payment_gateways_type_is_active_index');
+                $table->dropIndex('payment_gateways_category_is_active_index');
+            } catch (\Exception $e) {}
+            
+            $columns = ['provider', 'mode', 'supported_currencies', 'sort_order', 'description'];
+            foreach ($columns as $column) {
+                if (Schema::hasColumn('payment_gateways', $column)) {
+                    $table->dropColumn($column);
+                }
+            }
         });
     }
 };

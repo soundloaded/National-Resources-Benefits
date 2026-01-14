@@ -9,15 +9,19 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('loans', function (Blueprint $table) {
-            $table->foreignId('loan_plan_id')->nullable()->after('user_id')->constrained('loan_plans')->nullOnDelete();
+            if (!Schema::hasColumn('loans', 'loan_plan_id')) {
+                $table->foreignId('loan_plan_id')->nullable()->constrained('loan_plans')->nullOnDelete();
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('loans', function (Blueprint $table) {
-            $table->dropForeign(['loan_plan_id']);
-            $table->dropColumn('loan_plan_id');
+            if (Schema::hasColumn('loans', 'loan_plan_id')) {
+                $table->dropForeign(['loan_plan_id']);
+                $table->dropColumn('loan_plan_id');
+            }
         });
     }
 };
