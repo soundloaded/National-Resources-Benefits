@@ -32,8 +32,35 @@ jobs:
           php-version: '8.2'
           extensions: mbstring, xml, ctype, iconv, intl, pdo_mysql
       
+      - name: Get Composer Cache Directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+      
       - name: Install Composer dependencies
-        run: composer install --no-dev --optimize-autoloader --no-interaction
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+      
+      - name: Check if FTP secrets are configured
+        run: |
+          if [ -z "${{ secrets.FTP_SERVER }}" ] || [ -z "${{ secrets.FTP_USERNAME }}" ] || [ -z "${{ secrets.FTP_PASSWORD }}" ]; then
+            echo "❌ ERROR: FTP secrets are not configured!"
+            echo ""
+            echo "Please add these secrets in your GitHub repository:"
+            echo "  Settings → Secrets and variables → Actions → New repository secret"
+            echo ""
+            echo "Required secrets:"
+            echo "  - FTP_SERVER (e.g., ftp.nationalresourcebenefits.us)"
+            echo "  - FTP_USERNAME (your cPanel username)"
+            echo "  - FTP_PASSWORD (your cPanel password)"
+            exit 1
+          fi
+          echo "✅ FTP secrets are configured"
       
       - name: Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -42,6 +69,7 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           server-dir: /public_html/
+          dangerous-clean-slate: false
           exclude: |
             **/.git*
             **/.git*/**
@@ -49,7 +77,7 @@ jobs:
             **/.env
             **/.env.*
             **/storage/logs/**
-            **/storage/framework/cache/**
+            **/storage/framework/cache/data/**
             **/storage/framework/sessions/**
             **/storage/framework/views/**
             **/tests/**
@@ -57,6 +85,6 @@ jobs:
             **/.idea/**
             **/phpunit.xml
             **/phpstan.neon
-            **/*.md
             **/deploy.php
             **/admin-manager.php
+
